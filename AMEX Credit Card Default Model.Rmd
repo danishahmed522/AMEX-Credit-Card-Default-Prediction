@@ -1,0 +1,266 @@
+---
+title: "STA303H1 Final Project"
+author: "Danish Ahmed"
+date: "2024-04-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Final Project Part 2
+##### Setting up the document and reading the dataset
+```{r}
+library(dplyr)
+library(ggplot2)
+library(rms)
+df <- read.csv('train.csv')
+head(df)
+```
+
+##### Data Cleaning and changing data types for further analysis
+```{r}
+# removing all the observations with null values
+df <- na.omit(df)
+df$owns_car <- ifelse(df$owns_car == "Y", 1, 0)
+df$owns_house <- ifelse(df$owns_house == "Y", 1, 0)
+df$gender <- ifelse(df$gender == "M", 1, 0)
+head(df)
+```
+### EDA Figures
+##### Credit Default based on gender
+```{r}
+# Assuming 0 represents male and 1 represents female in the gender column
+# Assuming 1 represents Yes and 0 represents No in the credit_default column
+
+# Create a new column for gender labels based on the gender column values
+df$gender_label <- ifelse(df$gender == 1, "Male", "Female")
+
+# Create the bar plot with dodged position
+ggplot(df, aes(x = gender_label, fill = factor(credit_card_default))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Credit Card Default by Gender", x = "Gender", y = "Number of Defaults", fill = "Credit Card Default") +
+  scale_fill_manual(values = c("lightblue", "lightcoral"), labels = c("No", "Yes"))
+
+```
+
+##### Credit Default bassed on Migrant Worker Status
+```{r}
+library(ggplot2)
+
+# Assuming 1 represents migrant workers and 0 represents non-migrant workers in the migrant_worker column
+# Assuming 1 represents Yes and 0 represents No in the credit_default column
+
+# Create a new column for worker labels based on the migrant_worker column values
+df$worker_label <- ifelse(df$migrant_worker == 1, "Migrant Worker", "Non-Migrant Worker")
+
+# Create the bar plot with dodged position
+ggplot(df, aes(x = worker_label, fill = factor(credit_card_default))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Credit Card Default by Worker Type", x = "Worker Type", y = "Number of Defaults", fill = "Credit Card Default") +
+  scale_fill_manual(values = c("lightblue", "lightcoral"), labels = c("No", "Yes"))
+
+```
+
+```{r}
+# Histogram for credit_limit_used
+ggplot(df, aes(x = credit_limit_used...)) +
+  geom_histogram(binwidth = 10, fill = "skyblue", color = "black") +
+  labs(title = "Histogram of Credit Limit Used(%)", x = "Credit Limit Used(%)", y = "Number of People")
+```
+```{r}
+# Histogram for Number of days employed
+df <- df %>%
+  filter(no_of_days_employed < 10000)
+ggplot(df, aes(x = no_of_days_employed)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(title = "Histogram of the Total Number of Days Employed", x = "Days Employed", y = "Number of People")
+```
+
+##### Initial Model Check with all variables
+```{r}
+# Regular model check
+logit.mod1 <- glm(credit_card_default ~ age + gender + owns_car + owns_house + no_of_children + net_yearly_income + no_of_days_employed + total_family_members + migrant_worker + yearly_debt_payments + credit_limit + credit_limit_used... + credit_score + prev_defaults + default_in_last_6months + gender * owns_car + credit_limit * net_yearly_income + gender * owns_house + migrant_worker * no_of_days_employed, family = binomial(link = logit), data = df)
+summary(logit.mod1)
+```
+
+# Stepwise elimination based on AIC to choose variables
+```{r}
+# There are no missing values in the data and so we do not have to remove any observations
+#install.packages('sjPlot')
+
+logit.mod1 <- glm(credit_card_default ~ age + gender + owns_car + owns_house + no_of_children + net_yearly_income + no_of_days_employed + total_family_members + migrant_worker + yearly_debt_payments + credit_limit + credit_limit_used... + credit_score + prev_defaults + default_in_last_6months + gender * owns_car + credit_limit * net_yearly_income + gender * owns_house + migrant_worker * no_of_days_employed, family = binomial(link = logit), data = df)
+
+sel.var.aic <- step(logit.mod1, trace = 0, k = 2, direction = "both") 
+select_var_aic<-attr(terms(sel.var.aic), "term.labels")   
+select_var_aic
+```
+
+
+# Stepwise elimination based on BIC to choose variables
+```{r}
+sel.var.bic <- step(logit.mod1, trace = 0, k = log(nrow(df)), direction = "both") 
+select_var_bic<-attr(terms(sel.var.bic), "term.labels")   
+select_var_bic
+```
+
+# LASSO elimination to choose variables
+
+
+```{r}
+# Load necessary libraries
+library(glmnet)
+x <- model.matrix(credit_card_default ~ age + gender + owns_car + owns_house + no_of_children + net_yearly_income + no_of_days_employed + total_family_members + migrant_worker + yearly_debt_payments + credit_limit + credit_limit_used... + credit_score + prev_defaults + default_in_last_6months + gender * owns_car + credit_limit * net_yearly_income + gender * owns_house + migrant_worker * no_of_days_employed -1, family = binomial(), 
+    data = df) # -1 to exclude the intercept
+y <- df$credit_card_default
+cv.out = cv.glmnet(x, y, family = "binomial", type.measure = "class", alpha = 1)
+
+plot(cv.out)
+best.lambda <- cv.out$lambda.1se
+best.lambda
+co<-coef(cv.out, s = "lambda.1se")
+
+#Selection of the significant features(predictors)
+
+## threshold for variable selection ##
+
+thresh <- 0.00
+# select variables #
+inds<-which(abs(co) > thresh )
+variables<-row.names(co)[inds]
+sel.var.lasso<-variables[!(variables %in% '(Intercept)')]
+sel.var.lasso
+```
+
+##### Building the first model according to Stepwise AIC variable selection with the lowest AIC as the optimum model as output
+```{r}
+logit.mod.AIC <- glm(credit_card_default ~ gender + owns_car + owns_house + no_of_children + net_yearly_income + no_of_days_employed + total_family_members + migrant_worker + credit_limit + credit_limit_used... + credit_score + prev_defaults + net_yearly_income:credit_limit + gender:owns_house + no_of_days_employed:migrant_worker, family = binomial(link = logit), data = df)
+summary(logit.mod.AIC)
+```
+
+# Building the model according to Stepwise BIC variable selection
+```{r}
+logit.mod.BIC <- glm(credit_card_default ~ gender + owns_car + no_of_days_employed + 
+    migrant_worker + credit_limit_used... + credit_score + prev_defaults + 
+    no_of_days_employed:migrant_worker, family = binomial(link = logit), data = df)
+summary(logit.mod.BIC)
+```
+
+# Building the model according to LASSO variable selection
+```{r}
+logit.mod.LASSO <- glm(credit_card_default ~ credit_limit_used... + credit_score + prev_defaults + default_in_last_6months, family = binomial(link = logit), data = df)
+summary(logit.mod.LASSO)
+```
+
+# Cross-validation and calibration plot for model generated through Stepwise AIC variable selection
+```{r}
+library(rms)
+logit.mod.AIC.cross <- lrm(credit_card_default ~ age + gender + owns_car + owns_house + no_of_children + net_yearly_income + no_of_days_employed + total_family_members + migrant_worker + credit_limit + credit_limit_used... + prev_defaults + gender * owns_house + no_of_days_employed * migrant_worker, data = df, x=TRUE, y=TRUE, model = T, maxit=1000)
+```
+
+```{r}
+cross.calib <- calibrate(logit.mod.AIC.cross, method="crossvalidation", B=10) # model calibration
+plot(cross.calib, las=1, xlab = "Predicted Probability")
+```
+
+
+# Cross-validation and calibration plot for model generated through Stepwise BIC variable selection
+```{r}
+logit.mod.BIC.cross <- lrm(credit_card_default ~ gender + owns_car + no_of_days_employed + migrant_worker + credit_limit_used... + prev_defaults + migrant_worker * no_of_days_employed, data = df, x=TRUE, y=TRUE, model = T)
+```
+
+```{r}
+cross.calib <- calibrate(logit.mod.BIC.cross, method="crossvalidation", B=10) # model calibration
+plot(cross.calib, las=1, xlab = "Predicted Probability")
+```
+
+# Cross-validation and calibration plot for model generated through LASSO variable selection
+
+```{r}
+logit.mod.LASSO.cross <- lrm(credit_card_default ~ gender + owns_car + no_of_days_employed + migrant_worker + credit_limit_used... + prev_defaults + default_in_last_6months + no_of_days_employed:migrant_worker, data = df, x=TRUE, y=TRUE, model = T)
+cross.calib <- calibrate(logit.mod.LASSO.cross, method="crossvalidation", B=10) # model calibration
+plot(cross.calib, las=1, xlab = "Predicted Probability")
+```
+
+
+# Producing ROC for model generated by Stepwise AIC
+
+```{r}
+#install.packages('pROC')
+library(pROC)
+p <- predict(logit.mod.AIC.cross, type = "fitted")
+
+roc_logit <- roc(df$credit_card_default ~ p)
+## The True Positive Rate ##
+TPR <- roc_logit$sensitivities
+## The False Positive Rate ##
+FPR <- 1 - roc_logit$specificities
+
+plot(FPR, TPR, xlim = c(0,1), ylim = c(0,1), type = 'l', lty = 1, lwd = 2,col = 'red')
+abline(a = 0, b = 1, lty = 2, col = 'blue')
+text(0.7,0.4,label = paste("AUC = ", round(auc(roc_logit),2)))
+
+auc(roc_logit)
+```
+
+
+# Producing ROC for model generated by Stepwise BIC
+```{r}
+library(pROC)
+p <- predict(logit.mod.BIC.cross, type = "fitted")
+
+roc_logit <- roc(df$credit_card_default ~ p)
+## The True Positive Rate ##
+TPR <- roc_logit$sensitivities
+## The False Positive Rate ##
+FPR <- 1 - roc_logit$specificities
+
+plot(FPR, TPR, xlim = c(0,1), ylim = c(0,1), type = 'l', lty = 1, lwd = 2,col = 'red')
+abline(a = 0, b = 1, lty = 2, col = 'blue')
+text(0.7,0.4,label = paste("AUC = ", round(auc(roc_logit),2)))
+
+auc(roc_logit)
+```
+
+# Producing ROC for model generated by LASSO
+
+```{r}
+library(pROC)
+p <- predict(logit.mod.LASSO.cross, type = "fitted")
+
+roc_logit <- roc(df$credit_card_default ~ p)
+## The True Positive Rate ##
+TPR <- roc_logit$sensitivities
+## The False Positive Rate ##
+FPR <- 1 - roc_logit$specificities
+
+plot(FPR, TPR, xlim = c(0,1), ylim = c(0,1), type = 'l', lty = 1, lwd = 2,col = 'red')
+abline(a = 0, b = 1, lty = 2, col = 'blue')
+text(0.7,0.4,label = paste("AUC = ", round(auc(roc_logit),2)))
+
+auc(roc_logit)
+```
+
+
+# DFFITS for model generated through BIC variable selection as final model is BIC taken
+```{r}
+
+dffits_values <- dffits(logit.mod.BIC)
+
+eta <- predict(logit.mod.BIC, type = "link")
+par(family = 'serif')
+
+plot(eta, dffits_values, xlab='Linear Predictor', 
+     ylab='DFFITS', pch=20)
+
+lines(lowess(eta, dffits_values), lwd=2, col='blue')
+
+abline(h=0, lty='dotted')
+
+threshold <- 2 * sqrt(length(coef(logit.mod.LASSO))/nrow(df))
+abline(h=-threshold, lty='dotted')
+abline(h=threshold, lty='dotted')
+```
+
+
